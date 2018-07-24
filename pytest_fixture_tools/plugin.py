@@ -119,38 +119,54 @@ def _show_fixture_duplicates_main(config, session):
             previous_argname = argname
 
 
+def pytest_collection_modifyitems(session, config, items):
+    if config.option.fixture_graph:
+        save_fixture_graph(
+            config,
+            session._fixturemanager._arg2fixturedefs, 'fixture-graph',
+        )
+
+
 def pytest_runtest_setup(item):
     if item.config.option.fixture_graph and hasattr(item, "_fixtureinfo"):
-        # fixtures came from function parameters names
-        data = dict()
-        data['func_args'] = item._fixtureinfo.argnames, 'red'
-        for fixture_name, fixture_data in list(item._fixtureinfo.name2fixturedefs.items()):
+        save_fixture_graph(
+            item.config, item._fixtureinfo.name2fixturedefs,
+            "fixture-graph-{}".format(item._nodeid.replace(":", "_").replace("/", "-")),
+            func_args=item._fixtureinfo.argnames,
+        )
 
-            color = 'green'
-            data[fixture_name] = fixture_data[0].argnames, color
 
-        graph = pydot.Dot(graph_type='digraph')
+def save_fixture_graph(config, name2fixturedefs, filename, func_args=None):
+    data = dict()
+    if func_args:
+        data['func_args'] = func_args, 'red'
+    for fixture_name, fixture_data in list(name2fixturedefs.items()):
 
-        for name, depended_list in list(data.items()):
-            depended_list, color = depended_list
+        color = 'green'
+        data[fixture_name] = fixture_data[0].argnames, color
 
-            node = pydot.Node(name, style="filled", fillcolor=color)
-            graph.add_node(node)
-            for i in depended_list:
-                edge = pydot.Edge(node, i)
-                graph.add_edge(edge)
+    graph = pydot.Dot(graph_type='digraph')
 
-        log_dir = item.config.option.fixture_graph_output_dir
-        output_type = item.config.option.fixture_graph_output_type
-        mkdir_recursive(log_dir)
-        filename = "{0}/fixture-graph-{1}".format(log_dir, item._nodeid.replace(":", "_").replace("/", "-"))
-        tw.line()
-        tw.sep("-", "fixture-graph")
-        try:
-            graph.write("{}.{}".format(filename, output_type), format=output_type)
-            tw.line("created {}.{}.".format(filename, output_type))
-        except Exception:
-            tw.line("graphvis wasn't found in PATH")
-            graph.write(filename + ".dot")
-            tw.line("created {}.dot.".format(filename))
-            tw.line("You can convert it to a PNG using:\n\t'dot -Tpng {0}.dot -o {0}.png'".format(filename))
+    for name, depended_list in list(data.items()):
+        depended_list, color = depended_list
+
+        node = pydot.Node(name, style="filled", fillcolor=color)
+        graph.add_node(node)
+        for i in depended_list:
+            edge = pydot.Edge(node, i)
+            graph.add_edge(edge)
+
+    log_dir = config.option.fixture_graph_output_dir
+    output_type = config.option.fixture_graph_output_type
+    mkdir_recursive(log_dir)
+    filename = os.path.join(log_dir, filename)
+    tw.line()
+    tw.sep("-", "fixture-graph")
+    try:
+        graph.write("{}.{}".format(filename, output_type), format=output_type)
+        tw.line("created {}.{}.".format(filename, output_type))
+    except Exception:
+        tw.line("graphvis wasn't found in PATH")
+        graph.write(filename + ".dot")
+        tw.line("created {}.dot.".format(filename))
+        tw.line("You can convert it to a PNG using:\n\t'dot -Tpng {0}.dot -o {0}.png'".format(filename))
