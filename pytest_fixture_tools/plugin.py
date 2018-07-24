@@ -123,7 +123,15 @@ def pytest_collection_modifyitems(session, config, items):
     if config.option.fixture_graph:
         save_fixture_graph(
             config,
-            session._fixturemanager._arg2fixturedefs, 'fixture-graph',
+            name2fixturedefs={
+                name: [
+                    fixture_def for fixture_def in fixture_defs
+                    # Exclude fixtures defined in test modules.
+                    if not fixture_def.func.__module__.split('.')[-1].startswith("test_")
+                ]
+                for name, fixture_defs in session._fixturemanager._arg2fixturedefs.items()
+            },
+            filename='fixture-graph',
         )
 
 
@@ -131,7 +139,7 @@ def pytest_runtest_setup(item):
     if item.config.option.fixture_graph and hasattr(item, "_fixtureinfo"):
         save_fixture_graph(
             item.config, item._fixtureinfo.name2fixturedefs,
-            "fixture-graph-{}".format(item._nodeid.replace(":", "_").replace("/", "-")),
+            filename="fixture-graph-{}".format(item._nodeid.replace(":", "_").replace("/", "-")),
             func_args=item._fixtureinfo.argnames,
         )
 
@@ -140,10 +148,12 @@ def save_fixture_graph(config, name2fixturedefs, filename, func_args=None):
     data = dict()
     if func_args:
         data['func_args'] = func_args, 'red'
-    for fixture_name, fixture_data in list(name2fixturedefs.items()):
+    for fixture_name, fixture_defs in list(name2fixturedefs.items()):
 
-        color = 'green'
-        data[fixture_name] = fixture_data[0].argnames, color
+        for fixture_def in fixture_defs:
+            color = 'green'
+            data[fixture_name] = fixture_def.argnames, color
+            break
 
     graph = pydot.Dot(graph_type='digraph')
 
