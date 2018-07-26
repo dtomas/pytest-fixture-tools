@@ -9,7 +9,7 @@ import sys
 import functools
 
 from _pytest.python import getlocation
-from collections import defaultdict
+from collections import defaultdict, namedtuple
 
 import pydot
 
@@ -191,7 +191,10 @@ def _find_fixture_def(source_fixture_name, func_path, fixture_name, name2fixture
 
 
 def _get_cluster_name(func_path, cwd):
-    return os.path.relpath(func_path, cwd) if func_path.startswith(cwd) else func_path
+    return (
+        os.path.relpath(func_path, cwd) if func_path.startswith(cwd)
+        else func_path.split("site-packages/")[1]
+    )
 
 
 def _get_fixture_node_name(fixture_name, fixture_def, cwd, get_func_path):
@@ -199,6 +202,36 @@ def _get_fixture_node_name(fixture_name, fixture_def, cwd, get_func_path):
         return '', ''
     func_path = get_func_path(fixture_def.func)
     return _get_cluster_name(func_path, cwd), fixture_name
+
+
+class Tree(object):
+
+    def __init__(self, parent, name, children, graph=None):
+        self.name = name
+        self.children = children
+        self.graph = graph
+        self.parent = parent
+
+    def find_parent_graph(self):
+        if self.parent is None:
+            return None
+        if self.parent.graph is not None:
+            return self.parent.graph
+        return self.parent.find_parent_graph()
+
+    def __iter__(self):
+        yield self
+        for subtree in self.children.values():
+            for subtree2 in subtree:
+                yield subtree2
+
+    def _to_string(self, level=0):
+        return "  " * level + self.name + "\n" + "\n".join(
+            [subtree._to_string(level + 1) for subtree in self.children.values()],
+        )
+
+    def __str__(self):
+        return self._to_string()
 
 
 def save_fixture_graph(config, name2fixturedefs, filename, func_args=None):
@@ -235,16 +268,19 @@ def save_fixture_graph(config, name2fixturedefs, filename, func_args=None):
     #graph.set_overlap('compress')
     #graph.set_ratio('compress')
 
+    func_path2subgraph = {}
+
     for func_path, subgraph_data in data.items():
 
         subgraph = pydot.Cluster(graph_name=func_path)
         #subgraph.set_splines('true')
-        subgraph.set_label(func_path)
-        subgraph.set_concentrate('true')
+        #subgraph.set_label(func_path)
+        #subgraph.set_concentrate('true')
         #subgraph.set_overlap('compress')
         #subgraph.set_ratio('compress')
         #subgraph.set_size(1)
-        graph.add_subgraph(subgraph)
+        #graph.add_subgraph(subgraph)
+        func_path2subgraph[func_path] = subgraph
 
         for name, depended_list in list(subgraph_data.items()):
             depended_list, color = depended_list
@@ -258,6 +294,36 @@ def save_fixture_graph(config, name2fixturedefs, filename, func_args=None):
                 edge = pydot.Edge(node, dest_cluster + '/' + dest_name)
                 graph.add_edge(edge)
                 #subgraph.set_ltail(dest_cluster)
+
+    tree = Tree(parent=None, name='/', children={}, graph=graph)
+
+    for func_path, subgraph in func_path2subgraph.items():
+        subtree = tree
+        current_path = os.sep
+        subgraph.set_label(os.path.basename(func_path))
+        for segment in func_path.split(os.sep):
+            current_path += segment
+            try:
+                subtree = subtree.children[segment]
+            except KeyError:
+                subgraph2 = pydot.Cluster(graph_name=current_path)
+                subgraph2.set_label(segment)
+                subtree.children[segment] = subtree2 = Tree(
+                    parent=subtree,
+                    name=segment,
+                    children={},
+                    graph=subgraph2,
+                )
+                subtree = subtree2
+        subtree.graph = subgraph
+
+    for subtree in tree:
+        if subtree.graph is None:
+            continue
+        parent_graph = subtree.find_parent_graph()
+        if parent_graph is None:
+            continue
+        parent_graph.add_subgraph(subtree.graph)
 
     log_dir = config.option.fixture_graph_output_dir
     output_type = config.option.fixture_graph_output_type
